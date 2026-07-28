@@ -23,7 +23,6 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          cache: pip
       - name: Reconstruct source
         run: |
           cat marq-ci.part-* | base64 -d > marq-qwen-ci.tar.xz
@@ -66,7 +65,6 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          cache: pip
       - name: Reconstruct and install
         run: |
           cat marq-ci.part-* | base64 -d > marq-qwen-ci.tar.xz
@@ -101,7 +99,6 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          cache: pip
       - name: Reconstruct and install
         run: |
           sudo apt-get update
