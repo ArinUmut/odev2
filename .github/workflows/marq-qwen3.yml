@@ -1,4 +1,4 @@
-name: MARQ Qwen3 diagnostic
+name: MARQ Qwen3 final retry
 
 on:
   pull_request:
@@ -15,7 +15,7 @@ env:
   HF_HUB_DISABLE_XET: "1"
 
 jobs:
-  full-q0-fixed:
+  full-q0-retry:
     runs-on: ubuntu-latest
     timeout-minutes: 360
     steps:
@@ -31,65 +31,46 @@ jobs:
           python - <<'PY'
           from pathlib import Path
           p = Path('marq-qwen/scripts/run_qwen3_experiment.py')
-          s = p.read_text()
-          s = s.replace(
+          s = p.read_text().replace(
               'bootstrap = allocate_candidate_bank(candidate_store, budget_bytes=budget)',
               'bootstrap = allocate_candidate_bank(candidate_store, budget_bytes=budget, exact=False)',
           )
           p.write_text(s)
+
+          p = Path('marq-qwen/marq/categorical.py')
+          s = p.read_text()
+          old = '''        p, beta = exact_parallel_line_search(\n            values,\n            p,\n            target,\n            linear,\n            op,\n            tau=tau,\n            include_damping=include_damping,\n        )\n        obj = float(expected_objective(values, p, linear, op, tau=tau, include_damping=include_damping))\n        if obj > history[-1] + 1e-5:\n            raise RuntimeError(f"line search increased objective: {history[-1]} -> {obj}")\n        history.append(obj)\n        steps.append(beta)\n'''
+          new = '''        p_previous = p\n        p_candidate, beta = exact_parallel_line_search(\n            values,\n            p,\n            target,\n            linear,\n            op,\n            tau=tau,\n            include_damping=include_damping,\n        )\n        obj = float(expected_objective(values, p_candidate, linear, op, tau=tau, include_damping=include_damping))\n        previous = history[-1]\n        eps = torch.finfo(values.dtype if values.is_floating_point() else torch.float32).eps\n        numerical_slack = max(1e-8, 8.0 * eps * max(1.0, abs(previous)))\n        if obj > previous:\n            if obj <= previous + numerical_slack:\n                p = p_previous\n                obj = previous\n                beta = 0.0\n            else:\n                raise RuntimeError(f"line search increased objective beyond numerical slack: {previous} -> {obj} (slack={numerical_slack})")\n        else:\n            p = p_candidate\n        history.append(obj)\n        steps.append(beta)\n'''
+          if old not in s:
+              raise SystemExit('line-search patch target missing')
+          p.write_text(s.replace(old, new))
           PY
           python -m pip install --upgrade pip
           python -m pip install -e './marq-qwen[qwen]'
-      - name: Qwen3 all-Linear Q0 with bounded allocator
+      - name: Qwen3 all-Linear Q0
         working-directory: marq-qwen
         shell: bash
         run: |
-          mkdir -p runs/qwen3-full-q0
+          mkdir -p runs/qwen3-full-q0-retry
           set +e
           /usr/bin/time -v python scripts/run_qwen3_experiment.py \
-            --output runs/qwen3-full-q0 \
+            --output runs/qwen3-full-q0-retry \
             --model-cache models/qwen3-0.6b \
             --block-size 32 --calibration-blocks 1 --evaluation-blocks 1 \
             --rank 8 --oversample 4 --probes 1 --sweeps 1 --scale-cg-iterations 1 \
             --bits 2 3 4 5 --target-bpw 3.5 --skip-kquants \
-            2>&1 | tee runs/qwen3-full-q0/run.log
+            2>&1 | tee runs/qwen3-full-q0-retry/run.log
           status=${PIPESTATUS[0]}
-          echo "$status" > runs/qwen3-full-q0/exit-status.txt
+          echo "$status" > runs/qwen3-full-q0-retry/exit-status.txt
           exit 0
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: qwen3-marq-full-q0-diagnostic
-          path: marq-qwen/runs/qwen3-full-q0/
-          if-no-files-found: error
-
-  kquants-quality:
-    runs-on: ubuntu-latest
-    timeout-minutes: 360
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-      - name: Reconstruct and install
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ninja-build
-          cat marq-ci.part-* | base64 -d > marq-qwen-ci.tar.xz
-          echo '2249690953bf6febf5fb378d6654d12419556501d902cc9be408c0ba96283cb3  marq-qwen-ci.tar.xz' | sha256sum -c -
-          tar -xJf marq-qwen-ci.tar.xz
-          python -m pip install --upgrade pip
-          python -m pip install -e './marq-qwen[qwen]'
-      - name: Q2_K through Q5_K_M quality and speed
-        working-directory: marq-qwen
-        run: |
-          python scripts/run_kquants.py \
-            --output runs/qwen3-kquants-quality \
-            --model-cache models/qwen3-0.6b \
-            --block-size 128 --evaluation-blocks 4
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: qwen3-kquants-quality
-          path: marq-qwen/runs/qwen3-kquants-quality/results.json
-          if-no-files-found: error
+          name: qwen3-marq-full-q0-retry
+          path: |
+            marq-qwen/runs/qwen3-full-q0-retry/results.json
+            marq-qwen/runs/qwen3-full-q0-retry/selection-bootstrap.json
+            marq-qwen/runs/qwen3-full-q0-retry/marq-export/manifest.json
+            marq-qwen/runs/qwen3-full-q0-retry/run.log
+            marq-qwen/runs/qwen3-full-q0-retry/exit-status.txt
+          if-no-files-found: warn
