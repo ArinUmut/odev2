@@ -1,0 +1,1 @@
+diagnostic rerun with bounded allocator and 512-token K-quant evaluation

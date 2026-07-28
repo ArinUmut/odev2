@@ -1,0 +1,1 @@
+full all-linear retry with dtype-aware line-search rollback
